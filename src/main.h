@@ -11,6 +11,7 @@ extern "C" {
     #endif
 
     void lyricbar_request_shutdown(void);
+    int on_track_search(DB_playItem_t *track);
 
 typedef struct {
     ddb_gtkui_widget_t base;

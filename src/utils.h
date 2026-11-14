@@ -44,6 +44,12 @@ struct chopped{
 	string future;
 };
 
+// Per-line heights of the currently displayed lyrics. They are filled on the
+// GTK main thread by request_sizelines() (see ui.h) and read by the scrolling
+// thread, so access goes through these mutex-protected helpers.
+void set_linessizes(vector<int> sizes);
+vector<int> get_linessizes();
+
 string specialforplus(const char* text);
 
 string urlencode(const string &s);
@@ -57,6 +63,8 @@ void cancel_synced_lyrics_listener();
 struct parsed_lyrics get_lyrics_from_metadata(DB_playItem_t *track);
 
 void save_meta_data(DB_playItem_t *playing_song, struct parsed_lyrics lyrics);
+
+void save_lyrics(DB_playItem_t *track, struct parsed_lyrics lyrics);
 
 int mkpath(const std::string &name, mode_t mode);
 

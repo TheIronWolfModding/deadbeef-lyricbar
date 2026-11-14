@@ -18,6 +18,7 @@
 #include <future>		
 #include <iostream>
 #include <string>
+#include <utility>
 
 // - Global
 
@@ -50,6 +51,11 @@ GtkLabel		*Align_label;
 GtkLabel		*Save_method_label;
 GtkLabel		*Highlight_line_label;
 GtkLabel		*Edge_label;
+GtkLabel		*Lyrics_dir_label;
+GtkLabel		*Lyrics_format_label;
+GtkEntry		*Lyrics_dir_entry;
+GtkEntry		*Lyrics_format_entry;
+GtkButton		*Lyrics_dir_browse;
 
 int Align_int_value;
 int Save_method_int_value;
@@ -70,12 +76,14 @@ GtkTreeViewColumn	*Column_artist;
 GtkTreeViewColumn	*Column_song;
 GtkTreeViewColumn	*Column_album;
 GtkTreeViewColumn	*Column_source;
+GtkTreeViewColumn	*Column_timestamped;
 GtkTreeViewColumn	*Column_searchid;
 GtkTreeSelection	*selection;
 GtkCellRenderer		*artists;
 GtkCellRenderer		*songs;
 GtkCellRenderer		*albums;
 GtkCellRenderer		*sources;
+GtkCellRenderer		*timestampeds;
 GtkCellRenderer		*searchids;
 GtkLabel			*PreViewLyrics;
 GtkLabel			*Artist_label;
@@ -197,11 +205,36 @@ void	on_Cancel_clicked (GtkButton *b, gpointer user_data) {
 	gtk_window_close(GTK_WINDOW(user_data));
 }
 
+void	on_Lyrics_dir_browse_clicked(GtkButton *b) {
+	GtkWidget *dialog = gtk_file_chooser_dialog_new(_("Select lyrics folder"),
+		ConfigWindow,
+		GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER,
+		_("Cancel"), GTK_RESPONSE_CANCEL,
+		_("Select"), GTK_RESPONSE_ACCEPT,
+		NULL);
+
+	const char *current = gtk_entry_get_text(GTK_ENTRY(Lyrics_dir_entry));
+	if (current && *current) {
+		gtk_file_chooser_set_filename(GTK_FILE_CHOOSER(dialog), current);
+	}
+
+	if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
+		char *folder = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(dialog));
+		if (folder) {
+			gtk_entry_set_text(GTK_ENTRY(Lyrics_dir_entry), folder);
+			g_free(folder);
+		}
+	}
+	gtk_widget_destroy(dialog);
+}
+
 void	on_Apply_clicked (GtkButton *b) {
 	deadbeef->conf_set_int("lyricbar.lyrics.alignment", Align_int_value);
 	deadbeef->conf_set_int("save_method", Save_method_int_value);
 	deadbeef->conf_set_int("lyricbar.vpostion", gtk_spin_button_get_value (GTK_SPIN_BUTTON(Highlight_line)));
 	deadbeef->conf_set_int("lyricbar.border", gtk_spin_button_get_value (GTK_SPIN_BUTTON(Edge)));
+	deadbeef->conf_set_str("lyricbar.lyrics_dir", gtk_entry_get_text(GTK_ENTRY(Lyrics_dir_entry)));
+	deadbeef->conf_set_str("lyricbar.lyrics_filename_format", gtk_entry_get_text(GTK_ENTRY(Lyrics_format_entry)));
 	get_tags();
 	//gtk_label_set_text (GTK_LABEL(Title), (const gchar* ) "Apply");
 }
@@ -261,6 +294,11 @@ int on_button_config (GtkMenuItem *menuitem, gpointer user_data) {
 	Save_method_label		= GTK_LABEL(gtk_builder_get_object(builder, "Save_method_label"));
 	Edge_label				= GTK_LABEL(gtk_builder_get_object(builder, "Edge_label"));
 	Highlight_line_label	= GTK_LABEL(gtk_builder_get_object(builder, "Highlight_line_label"));
+	Lyrics_dir_label		= GTK_LABEL(gtk_builder_get_object(builder, "Lyrics_dir_label"));
+	Lyrics_format_label		= GTK_LABEL(gtk_builder_get_object(builder, "Lyrics_format_label"));
+	Lyrics_dir_entry		= GTK_ENTRY(gtk_builder_get_object(builder, "Lyrics_dir_entry"));
+	Lyrics_format_entry		= GTK_ENTRY(gtk_builder_get_object(builder, "Lyrics_format_entry"));
+	Lyrics_dir_browse		= GTK_BUTTON(gtk_builder_get_object(builder, "Lyrics_dir_browse"));
 
 
 //	Translation:
@@ -271,6 +309,8 @@ int on_button_config (GtkMenuItem *menuitem, gpointer user_data) {
 	gtk_label_set_label(Save_method_label, _("Save to: "));
 	gtk_label_set_label(Edge_label, _("Edge: "));
 	gtk_label_set_label(Highlight_line_label, _("Highlight line height %: "));
+	gtk_label_set_label(Lyrics_dir_label, _("Lyrics folder: "));
+	gtk_label_set_label(Lyrics_format_label, _("File name format: "));
 	
 	gtk_button_set_label(GTK_BUTTON(Check_bold), _("Bold"));
 	gtk_button_set_label(GTK_BUTTON(Align_left), _("Left"));
@@ -303,6 +343,11 @@ int on_button_config (GtkMenuItem *menuitem, gpointer user_data) {
 	g_signal_connect(OK, "clicked", G_CALLBACK(on_OK_clicked), ConfigWindow);
 	g_signal_connect(Cancel, "clicked", G_CALLBACK(on_Cancel_clicked), ConfigWindow);
 	g_signal_connect(Apply, "clicked", G_CALLBACK(on_Apply_clicked), NULL);
+	g_signal_connect(Lyrics_dir_browse, "clicked", G_CALLBACK(on_Lyrics_dir_browse_clicked), NULL);
+
+//	Saved lyrics location:
+	gtk_entry_set_text(Lyrics_dir_entry, deadbeef->conf_get_str_fast("lyricbar.lyrics_dir", ""));
+	gtk_entry_set_text(Lyrics_format_entry, deadbeef->conf_get_str_fast("lyricbar.lyrics_filename_format", "[%artist% - ][%title%]"));
 
 //	Saved color to choosers:
 	set_chooser_color(Background_color, deadbeef->conf_get_str_fast("lyricbar.backgroundcolor", "#F6F6F6"));
@@ -393,24 +438,50 @@ string specialtoplus(string text) {;
     return result;
 }
 
+// Must run on the main thread: GtkTreeStore is a GTK object.
+// Providers return 5 entries per result: artist, song, album, the id their
+// downloader needs, and what the provider already knows about the lyrics being
+// timestamped ("yes", "no" or "" when it can only be known after fetching).
 void populate_tree_view(vector<string> songs, string source) {
-	for(size_t i = 0; i < songs.size(); i+=4) {
+	for(size_t i = 0; i + 4 < songs.size(); i+=5) {
 		gtk_tree_store_append (treeStore, &iter_populate, NULL);
 		gtk_tree_store_set(treeStore, &iter_populate, 0, songs[i].c_str(), -1);
 		gtk_tree_store_set(treeStore, &iter_populate, 1, songs[i+1].c_str(), -1);
 		gtk_tree_store_set(treeStore, &iter_populate, 2, songs[i+2].c_str(), -1);
 		gtk_tree_store_set(treeStore, &iter_populate, 3, source.c_str(), -1);
 		gtk_tree_store_set(treeStore, &iter_populate, 4, songs[i+3].c_str(), -1);
+		gtk_tree_store_set(treeStore, &iter_populate, 5, songs[i+4].c_str(), -1);
 	}
 	
+}
+
+// Providers look their songs up on worker threads, but the rows can only be
+// added by the main loop, so results are handed over through an idle handler.
+struct search_results {
+	vector<string> songs;
+	string source;
+};
+
+static gboolean populate_tree_view_idle (gpointer data) {
+	search_results *res = static_cast<search_results *>(data);
+	populate_tree_view (res->songs, res->source);
+	delete res;
+	return G_SOURCE_REMOVE;
+}
+
+static void post_search_results (vector<string> songs, string source) {
+	g_idle_add (populate_tree_view_idle, new search_results {std::move (songs), std::move (source)});
 }
 
 void on_Save_clicked (GtkButton *b, gpointer user_data) {
 	deadbeef->pl_lock();
 	DB_playItem_t *track = static_cast<DB_playItem_t *>(user_data);
+	if (track) {
+		deadbeef->pl_item_ref(track);
+	}
 	deadbeef->pl_unlock(); 
 	if (track){
-		save_meta_data( track, selected_lyrics);
+		save_lyrics( track, selected_lyrics);
 		DB_playItem_t *playing_track = deadbeef->streamer_get_playing_track_safe();
 		if (playing_track){
 			if (playing_track == track){
@@ -459,40 +530,52 @@ void	on_row_double_clicked (GtkButton *b) {
 //		selected_lyrics = spotify_lyrics_downloader(value);
 //	}
 
+	// The provider could only say what its search page hinted at; now the lyrics
+	// are fetched we know for sure, so correct the "Is timestamped?" cell.
+	if (!selected_lyrics.lyrics.empty ()) {
+		gtk_tree_store_set (GTK_TREE_STORE (model), &iter, 5, selected_lyrics.sync ? "yes" : "no", -1);
+	}
+
 	gtk_label_set_label(PreViewLyrics,selected_lyrics.lyrics.c_str());
+	g_free(provider);
+	g_free(value);
 }
 
 void thread_listener_Megalobiz(string text_song, string text_artist){
 	vector<string> megalobiz_songs = megalobiz_get_songs(text_song, text_artist);
-	populate_tree_view(megalobiz_songs, "Megalobiz");
+	post_search_results(megalobiz_songs, "Megalobiz");
 }
 
-void thread_listener_LrcLib(string text_song, string text_artist, string text_album){	
-	deadbeef->pl_lock();
+void thread_listener_LrcLib(string text_song, string text_artist, string text_album){
+	// The search window works without playback (it falls back to the playlist
+	// cursor), so there may be no playing track at all -- and pl_get_item_duration
+	// would dereference NULL. pl_get_item_duration takes the playlist lock itself,
+	// so no pl_lock here.
+	int int_duration = 0;
 	DB_playItem_t *track = deadbeef->streamer_get_playing_track_safe();
-	float length = deadbeef->pl_get_item_duration(track);
-	deadbeef->pl_item_unref(track);
-	deadbeef->pl_unlock();
-	int int_duration = static_cast<int>(length);
+	if (track) {
+		int_duration = static_cast<int>(deadbeef->pl_get_item_duration(track));
+		deadbeef->pl_item_unref(track);
+	}
 	vector<string> lrclib_songs = lrclib_get_songs(text_song, text_artist, text_album, int_duration);
-	populate_tree_view(lrclib_songs, "LRCLIB");
+	post_search_results(lrclib_songs, "LRCLIB");
 }
 
 void thread_listener_Not_working_now(string text_song, string text_artist){
 //	vector<string> spotify_songs = 	spotify_get_songs(text_song,text_artist);
 //	populate_tree_view(spotify_songs, "Spotify");
 	vector<string> azlyrics_songs = azlyrics_get_songs(text_song, text_artist);
-	populate_tree_view(azlyrics_songs, "AZlyrics");
+	post_search_results(azlyrics_songs, "AZlyrics");
 }
 
 void thread_listener_Music_163(string text_song, string text_artist){
 	vector<string> music_163_songs = music_163_get_songs(text_song, text_artist);
-	populate_tree_view(music_163_songs, "MUSIC 163");
+	post_search_results(music_163_songs, "MUSIC 163");
 }
 	
 void thread_listener_RCLyricsBand(string text_song, string text_artist){	
 	vector<string> rclyricsband_songs = rclyricsband_get_songs(text_song, text_artist);
-	populate_tree_view(rclyricsband_songs, "RCLyricsBand");
+	post_search_results(rclyricsband_songs, "RCLyricsBand");
 	
 }
 
@@ -523,8 +606,50 @@ void	on_Exit_clicked (GtkButton *b, gpointer user_data) {
 	gtk_window_close(GTK_WINDOW(user_data));
 }
 
+// The artist/title/album fields are filled in from the playing (or cursor)
+// track before the window is shown, so start the search straight away instead
+// of waiting for the Search button. Runs once the nested main loop is going,
+// because that is when the providers' results can be handled.
+static gboolean auto_search_idle (gpointer) {
+	const char *artist = gtk_entry_get_text(Artist_input);
+	const char *song = gtk_entry_get_text(Song_input);
+	if ((artist && *artist) || (song && *song)) {
+		on_Search_clicked (NULL);
+	}
+	return G_SOURCE_REMOVE;
+}
+
 extern "C"
 int on_button_search (GtkMenuItem *menuitem, gpointer user_data) {
+	return on_track_search(nullptr);
+}
+
+extern "C"
+int on_track_search (DB_playItem_t *track) {
+	static bool search_open = false;
+	if (search_open) {
+		gtk_window_present(SearchWindow);
+		return EXIT_SUCCESS;
+	}
+	search_open = true;
+
+	// An explicit track comes from the app context menu, not playback.
+	if (track) {
+		deadbeef->pl_item_ref(track);
+	}
+	else {
+		track = deadbeef->streamer_get_playing_track_safe();
+		if (!track) {
+			ddb_playlist_t *plt = deadbeef->plt_get_curr();
+			if (plt) {
+				int cursor = deadbeef->plt_get_cursor(plt, PL_MAIN);
+				if (cursor >= 0) {
+					track = deadbeef->plt_get_item_for_idx(plt, cursor, PL_MAIN);
+				}
+				deadbeef->plt_unref(plt);
+			}
+		}
+	}
 
 	builder = gtk_builder_new_from_resource ("/src/panels.glade");
 
@@ -540,11 +665,13 @@ int on_button_search (GtkMenuItem *menuitem, gpointer user_data) {
 	Column_song			= GTK_TREE_VIEW_COLUMN(gtk_builder_get_object(builder, "Column_song"));
 	Column_album		= GTK_TREE_VIEW_COLUMN(gtk_builder_get_object(builder, "Column_album"));
 	Column_source		= GTK_TREE_VIEW_COLUMN(gtk_builder_get_object(builder, "Column_source"));
+	Column_timestamped	= GTK_TREE_VIEW_COLUMN(gtk_builder_get_object(builder, "Column_timestamped"));
 	Column_searchid		= GTK_TREE_VIEW_COLUMN(gtk_builder_get_object(builder, "Column_searchid"));
 	artists				= GTK_CELL_RENDERER(gtk_builder_get_object(builder, "artists"));
 	songs				= GTK_CELL_RENDERER(gtk_builder_get_object(builder, "songs"));
 	albums				= GTK_CELL_RENDERER(gtk_builder_get_object(builder, "albums"));
 	sources				= GTK_CELL_RENDERER(gtk_builder_get_object(builder, "sources"));
+	timestampeds			= GTK_CELL_RENDERER(gtk_builder_get_object(builder, "timestampeds"));
 	searchids			= GTK_CELL_RENDERER(gtk_builder_get_object(builder, "searchids"));
 	selection			= GTK_TREE_SELECTION(gtk_builder_get_object(builder, "selection"));
 	PreViewLyrics		= GTK_LABEL(gtk_builder_get_object(builder, "PreViewLyrics"));
@@ -566,28 +693,18 @@ int on_button_search (GtkMenuItem *menuitem, gpointer user_data) {
 		gtk_tree_view_column_set_title(Column_song, _("Song"));
 		gtk_tree_view_column_set_title(Column_album, _("Album"));
 		gtk_tree_view_column_set_title(Column_source, _("Source"));
+		gtk_tree_view_column_set_title(Column_timestamped, _("Is timestamped?"));
 		gtk_label_set_text (PreViewLyrics, (const gchar* ) _("Lyrics preview"));
 
-//	Playing track or selected on playlist to labels:
+//	Fill the search fields from the requested track; missing tags are safe.
 	deadbeef->pl_lock();
-	DB_playItem_t *track = deadbeef->streamer_get_playing_track_safe();
-	if (track){
-		gtk_entry_set_text(Artist_input, deadbeef->pl_find_meta(track, "artist"));
-		gtk_entry_set_text(Song_input, deadbeef->pl_find_meta(track, "title"));
-		gtk_entry_set_text(Album_input, deadbeef->pl_find_meta(track, "album"));	
-		deadbeef->pl_item_unref(track);
-	}
-	else{
-		ddb_playlist_t *plt = deadbeef->plt_get_curr();
-		if (plt) {
-			int cursor = deadbeef->pl_get_cursor (PL_MAIN);
-            track = deadbeef->pl_get_for_idx_and_iter (cursor, PL_MAIN);
-			gtk_entry_set_text(Artist_input, deadbeef->pl_find_meta(track, "artist"));
-			gtk_entry_set_text(Song_input, deadbeef->pl_find_meta(track, "title"));
-			gtk_entry_set_text(Album_input, deadbeef->pl_find_meta(track, "album"));	
-			deadbeef->pl_item_unref(track);
-			deadbeef->plt_unref(plt);
-			}
+	if (track) {
+		const char *artist = deadbeef->pl_find_meta(track, "artist");
+		const char *title = deadbeef->pl_find_meta(track, "title");
+		const char *album = deadbeef->pl_find_meta(track, "album");
+		gtk_entry_set_text(Artist_input, artist ? artist : "");
+		gtk_entry_set_text(Song_input, title ? title : "");
+		gtk_entry_set_text(Album_input, album ? album : "");
 	}
 	deadbeef->pl_unlock();
 	
@@ -596,6 +713,7 @@ int on_button_search (GtkMenuItem *menuitem, gpointer user_data) {
 	gtk_tree_view_column_add_attribute(Column_song, songs, "text", 1);
 	gtk_tree_view_column_add_attribute(Column_album, albums, "text", 2);
 	gtk_tree_view_column_add_attribute(Column_source, sources, "text", 3);
+	gtk_tree_view_column_add_attribute(Column_timestamped, timestampeds, "text", 5);
 	gtk_tree_view_column_add_attribute(Column_searchid, searchids, "text", 4);	
 	gtk_tree_view_column_set_visible(Column_searchid,FALSE);
 	selection = gtk_tree_view_get_selection(GTK_TREE_VIEW(SongsTree));
@@ -609,11 +727,21 @@ int on_button_search (GtkMenuItem *menuitem, gpointer user_data) {
 	g_signal_connect(Search, "clicked", G_CALLBACK(on_Search_clicked), NULL);
 
 	gtk_widget_show(GTK_WIDGET(SearchWindow));
+	gtk_window_maximize(SearchWindow);
 	gtk_widget_grab_focus(GTK_WIDGET(SearchWindow));
 	gtk_window_set_keep_above(SearchWindow,1);
 
+	guint auto_search_id = g_idle_add (auto_search_idle, NULL);
+
 	gtk_main();
-	
+	if (g_main_context_find_source_by_id(nullptr, auto_search_id)) {
+		g_source_remove(auto_search_id);
+	}
+	if (track) {
+		deadbeef->pl_item_unref(track);
+	}
+	SearchWindow = nullptr;
+	search_open = false;
 	return EXIT_SUCCESS;
 }
 
@@ -819,8 +947,10 @@ void	on_Edit_apply_clicked (GtkButton *b) {
 	}
 	deadbeef->pl_lock();
 	DB_playItem_t *track = deadbeef->streamer_get_playing_track_safe();
-	save_meta_data(track, {text, sync});
-	deadbeef->pl_item_unref(track);
+	if (track) {
+		save_lyrics(track, {text, sync});
+		deadbeef->pl_item_unref(track);
+	}
 	deadbeef->pl_unlock();
 }
 

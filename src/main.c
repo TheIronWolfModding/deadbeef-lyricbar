@@ -80,7 +80,45 @@ DB_plugin_action_t remove_action = {
 	.title = "Remove Lyrics From Cache"
 };
 
-static DB_plugin_action_t *lyricbar_get_actions() {
+static gboolean search_lyrics_idle(gpointer data) {
+	on_track_search((DB_playItem_t *)data);
+	return G_SOURCE_REMOVE;
+}
+
+static void search_track_unref(gpointer data) {
+	deadbeef->pl_item_unref((DB_playItem_t *)data);
+}
+
+static int search_lyrics_action(DB_plugin_action_t *action, ddb_action_context_t ctx) {
+	if (ctx != DDB_ACTION_CTX_SELECTION) {
+		return 0;
+	}
+	ddb_playlist_t *plt = deadbeef->action_get_playlist();
+	deadbeef->pl_lock();
+	DB_playItem_t *track = deadbeef->plt_get_first(plt, PL_MAIN);
+	while (track && !deadbeef->pl_is_selected(track)) {
+		DB_playItem_t *next = deadbeef->pl_get_next(track, PL_MAIN);
+		deadbeef->pl_item_unref(track);
+		track = next;
+	}
+	deadbeef->pl_unlock();
+	deadbeef->plt_unref(plt);
+	if (track) {
+		// Keep the selected track alive until the GTK dialog has closed.
+		g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, search_lyrics_idle, track, search_track_unref);
+	}
+	return 0;
+}
+
+static DB_plugin_action_t search_action = {
+	.name = "lyricbar_search_lyrics",
+	.flags = DB_ACTION_SINGLE_TRACK | DB_ACTION_ADD_MENU | DB_ACTION_EXCLUDE_FROM_CTX_PLAYLIST,
+	.callback2 = search_lyrics_action,
+	.next = &remove_action,
+	.title = "Search for Lyrics"
+};
+
+static DB_plugin_action_t *lyricbar_get_actions(DB_playItem_t *selected_track) {
 	deadbeef->pl_lock();
 	remove_action.flags |= DB_ACTION_DISABLED;
 	DB_playItem_t *current = deadbeef->pl_get_first(PL_MAIN);
@@ -97,7 +135,7 @@ static DB_plugin_action_t *lyricbar_get_actions() {
 		current = next;
 	}
 	deadbeef->pl_unlock();
-	return &remove_action;
+	return &search_action;
 }
 
 static ddb_gtkui_widget_t *w_lyricbar_create(void) {
@@ -134,13 +172,14 @@ DB_plugin_t *ddb_lyricbar_gtk3_load(DB_functions_t *ddb) {
 	bindtextdomain("deadbeef-lyricbar", "/usr/share/locale");
 	textdomain("deadbeef-lyricbar");
 	remove_action.title = _(remove_action.title);
+	search_action.title = _(search_action.title);
 	return DB_PLUGIN(&plugin);
 }
 
 
 static DB_misc_t plugin = {
 	.plugin.api_vmajor = 1,
-	.plugin.api_vminor = 5,
+	.plugin.api_vminor = 10,
 	.plugin.version_major = 0,
 	.plugin.version_minor = 6,
 	.plugin.type = DB_PLUGIN_MISC,

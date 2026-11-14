@@ -38,6 +38,8 @@ vector<string> azlyrics_get_songs(string song,string artist){
 				artists_and_songs.push_back(song_clean);
 				artists_and_songs.push_back("");
 				artists_and_songs.push_back(song_url);
+				// Plain text lyrics site: its downloader always reports sync = false.
+				artists_and_songs.push_back("no");
 
 		}
 	}

@@ -8,12 +8,16 @@
 
 #include <sys/stat.h>
 #include <fstream>
+#include <filesystem>
 #include <iostream>
 #include <thread>
 #include <vector>
 #include <string>
+#include <cstring>
+#include <system_error>
 #include <pthread.h>
 #include <atomic>
+#include <mutex>
 
 
 using namespace std;
@@ -36,7 +40,16 @@ bool lyricstart     = false;
 bool syncedlyrics   = false;
 int previous_pad    = 0;
 struct timespec ts  = {0, 50000000};
-vector<int> linessizes;
+static vector<int> linessizes;
+static std::mutex linessizes_mutex;
+void set_linessizes(vector<int> sizes) {
+	std::lock_guard<std::mutex> lock(linessizes_mutex);
+	linessizes = std::move(sizes);
+}
+vector<int> get_linessizes() {
+	std::lock_guard<std::mutex> lock(linessizes_mutex);
+	return linessizes;
+}
 struct sync lrc;
 struct sync_view lrc_view;
 vector<int> linescharactersizes;
@@ -167,6 +180,10 @@ void write_synced( DB_playItem_t *it){
 	string present = "";
 	string future = "";
 	string padding = "";
+
+	// The per-line heights are produced on the GTK main thread; take a
+	// snapshot so the vector cannot be reallocated under us while we read it.
+	vector<int> sizes = get_linessizes();
 	
 	//If to avoid write again when nothing has changed or DeadBeef is paused.
 	if ((lrc.position.size() < 2) || (deadbeef->get_output()->state() == 2)) {
@@ -191,8 +208,8 @@ void write_synced( DB_playItem_t *it){
 	}
 
 	//Add padding variable at beginning of lyrics to show to make scroll with first lines.
-	if (!linessizes.empty() && (size_t)(linessizes[1]+1) < lrc.position.size()){
-	    pad = int((lrc.position[linessizes[1]+1] - pos)/(lrc.position[linessizes[1]+1])*linessizes[0]);
+	if (!sizes.empty() && (size_t)(sizes[1]+1) < lrc.position.size()){
+	    pad = int((lrc.position[sizes[1]+1] - pos)/(lrc.position[sizes[1]+1])*sizes[0]);
 	    if (pad == previous_pad){
 	        return; //If to avoid write again when nothing has changed.
 	    }
@@ -203,10 +220,15 @@ void write_synced( DB_playItem_t *it){
 	}
 
 	//Add padding variable at beginning of lyrics to show to make scroll when removing a past line.
-	if (((!linessizes.empty()) && (presentpos - linessizes[1]) > 0) && (size_t)(presentpos+1) < lrc.position.size()){
-		minimuntopad = presentpos - linessizes[1];
+	if (((!sizes.empty()) && (presentpos - sizes[1]) > 0) && (size_t)(presentpos+1) < lrc.position.size()){
+		minimuntopad = presentpos - sizes[1];
+		int lineheight = 0;
+		int idx = minimuntopad + 5;
+		if (idx >= 0 && idx < (int)sizes.size()) {
+			lineheight = sizes[idx] - 1;
+		}
 		pad = int(((lrc.position[presentpos +1] - pos)/(lrc.position[presentpos+1]
-		     -lrc.position[presentpos]))*(linessizes[presentpos - linessizes[1] + 5] -1));
+		     -lrc.position[presentpos]))*lineheight);
 	    if (pad == previous_pad){
 	        return; //"if" to avoid write again when nothing has changed.
 	    }
@@ -219,7 +241,7 @@ void write_synced( DB_playItem_t *it){
 		past.append(lrc.synclyrics[i] + "\n");
 	}
 //		cout << "Pos: " << pos << " min2pad: " << minimuntopad << " lrc.position[minimuntopad + 1]: " << lrc.synclyrics[minimuntopad + 1] << "                                 " << "LCS: " << linescharactersizes.size() << "\t\r" << std::flush;
-	set_lyrics(it, past, present, future, padding);
+	set_lyrics(it, past, present, future, padding, true);
 }
 
 // Main loop to update lyrics on real time.
@@ -271,9 +293,10 @@ void chopset_lyrics(DB_playItem_t *track, string lyrics){
 	linescharactersizes.push_back(1);
 	
 	if (track == it){
-	    gdk_threads_enter();
-		linessizes = sizelines(track, prelyrics);
-		gdk_threads_leave();
+		// sizelines() touches the lyrics TextView, and GTK is not thread-safe:
+		// request_sizelines() marshals the work onto the GTK main thread and
+		// stores the result in the linessizes global.
+		request_sizelines(track, prelyrics);
 	}
 
 	deadbeef->pl_item_ref(it);
@@ -459,8 +482,180 @@ bool is_cached(const char *artist, const char *title) {
 	return false;
 }
 
+//---------------------------------------------------------------------
+//****** Lyrics file location *****************************************
+//---------------------------------------------------------------------
+
+// Folder with lyrics files. Empty means "next to the audio file".
+static string lyrics_folder() {
+	const char *dir = deadbeef->conf_get_str_fast("lyricbar.lyrics_dir", "");
+	return dir ? dir : "";
+}
+
+// File name pattern used inside lyricbar.lyrics_dir, foobar2000 style,
+// e.g. "[%artist% - ][%title%]".
+static string lyrics_filename_format() {
+	const char *fmt = deadbeef->conf_get_str_fast("lyricbar.lyrics_filename_format", "[%artist% - ][%title%]");
+	return (fmt && *fmt) ? fmt : "[%artist% - ][%title%]";
+}
+
+static string track_meta(DB_playItem_t *track, const char *key) {
+	deadbeef->pl_lock();
+	const char *value = deadbeef->pl_find_meta(track, key);
+	string result = value ? value : "";
+	deadbeef->pl_unlock();
+	return result;
+}
+
+static string trim_spaces(string s) {
+	size_t start = s.find_first_not_of(" \t");
+	if (start == string::npos) {
+		return "";
+	}
+	size_t end = s.find_last_not_of(" \t");
+	return s.substr(start, end - start + 1);
+}
+
+// Replaces the characters foobar2000 replaces with '-' in lyrics file names,
+// so that both players resolve the same files.
+static string sanitize_lyrics_filename(string name) {
+	static const char invalid[] = "/\\<>:\"|?*";
+	for (size_t i = 0; i < name.size(); i++) {
+		if (strchr(invalid, name[i])) {
+			name[i] = '-';
+		}
+	}
+	return trim_spaces(name);
+}
+
+// Expands %tag% tokens and [optional groups], the way foobar2000 does:
+// a [group] is dropped when any %tag% inside it is empty, so
+// "[%artist% - ][%title%]" gives "Artist - Title" or just "Title".
+static string expand_lyrics_format(const string &format, DB_playItem_t *track, bool &missing) {
+	missing = false;
+	string out;
+	size_t i = 0;
+	while (i < format.size()) {
+		char c = format[i];
+		if (c == '[') {
+			int depth = 1;
+			string inner;
+			size_t j = i + 1;
+			while (j < format.size()) {
+				if (format[j] == '[') {
+					depth++;
+				}
+				else if (format[j] == ']') {
+					depth--;
+					if (depth == 0) {
+						break;
+					}
+				}
+				inner += format[j];
+				j++;
+			}
+			bool inner_missing = false;
+			string expanded = expand_lyrics_format(inner, track, inner_missing);
+			if (!inner_missing && !expanded.empty()) {
+				out += expanded;
+			}
+			i = (j < format.size()) ? j + 1 : j;
+		}
+		else if (c == '%') {
+			size_t j = format.find('%', i + 1);
+			if (j == string::npos) {
+				out += format.substr(i);
+				break;
+			}
+			string token = format.substr(i + 1, j - i - 1);
+			if (token == "filename" || token == "filename_base") {
+				string uri = track_meta(track, ":URI");
+				size_t slash = uri.find_last_of('/');
+				string base = (slash == string::npos) ? uri : uri.substr(slash + 1);
+				if (token == "filename_base") {
+					size_t dot = base.find_last_of('.');
+					if (dot != string::npos) {
+						base = base.substr(0, dot);
+					}
+				}
+				if (base.empty()) {
+					missing = true;
+				}
+				out += base;
+			}
+			else {
+				string value = track_meta(track, token.c_str());
+				if (value.empty()) {
+					missing = true;
+				}
+				out += value;
+			}
+			i = j + 1;
+		}
+		else {
+			out += c;
+			i++;
+		}
+	}
+	return out;
+}
+
+static string expand_lyrics_format(const string &format, DB_playItem_t *track) {
+	bool missing = false;
+	return expand_lyrics_format(format, track, missing);
+}
+
+// Path of the lyrics file next to the audio file (track path without extension).
+static string sidecar_file_base_path(DB_playItem_t *track) {
+	string uri = track_meta(track, ":URI");
+	size_t dot = uri.find_last_of('.');
+	if (dot != string::npos) {
+		uri = uri.substr(0, dot);
+	}
+	return uri;
+}
+
+// Path of the lyrics file for the track, without the .lrc/.txt extension.
+static string lyrics_base_path(DB_playItem_t *track) {
+	string dir = lyrics_folder();
+	if (!dir.empty()) {
+		string name = sanitize_lyrics_filename(expand_lyrics_format(lyrics_filename_format(), track));
+		if (!name.empty()) {
+			while (dir.size() > 1 && dir[dir.size() - 1] == '/') {
+				dir.erase(dir.size() - 1);
+			}
+			return dir + "/" + name;
+		}
+	}
+	return sidecar_file_base_path(track);
+}
+
+static bool read_lyrics_file(const string &path, string &lyrics) {
+	ifstream infile(path.c_str());
+	if (!infile.is_open()) {
+		return false;
+	}
+	string contents, line;
+	while (getline(infile, line)) {
+		contents += line + "\n";
+	}
+	// Empty/whitespace-only cache files are not lyrics. In particular, a
+	// blank .lrc must not hide a valid .txt or prevent the online lookup.
+	if (contents.find_first_not_of(" \t\r\n") == string::npos) {
+		return false;
+	}
+	lyrics = std::move(contents);
+	return true;
+}
+
 extern "C"
 void ensure_lyrics_path_exists() {
+	string dir = lyrics_folder();
+	if (dir.empty()) {
+		return;
+	}
+	std::error_code error;
+	std::filesystem::create_directories(dir, error);
 }
 
 //---------------------------------------------------------------------
@@ -468,47 +663,58 @@ void ensure_lyrics_path_exists() {
 //---------------------------------------------------------------------
 
 struct parsed_lyrics get_lyrics_next_to_file(DB_playItem_t *track) {
+	string lyrics;
 	bool sync = false;
+
+	// Try the configured lyrics folder first, then the file next to the track.
+	string configured = lyrics_base_path(track);
+	string sidecar = sidecar_file_base_path(track);
+	vector<string> bases;
+	if (!configured.empty()) {
+		bases.push_back(configured);
+	}
+	if (!sidecar.empty() && sidecar != configured) {
+		bases.push_back(sidecar);
+	}
+
+	for (size_t i = 0; i < bases.size(); i++) {
+		if (read_lyrics_file(bases[i] + ".lrc", lyrics) || read_lyrics_file(bases[i] + ".txt", lyrics)) {
+			break;
+		}
+	}
+
+	if (lyrics.empty()) {
+		return {"", false};
+	}
+
 	bool first_timestamped = false;
 	int total_lines = 1;
 	int timestamped_lines = 1;
-	ifstream infile;
-	string lyrics;
-	string line;
-
-	deadbeef->pl_lock();
-	const char *track_location = deadbeef->pl_find_meta(track, ":URI");
-	deadbeef->pl_unlock();
-	string trackstring = track_location;
-	size_t lastindex = trackstring.find_last_of(".");
-	trackstring = trackstring.substr(0, lastindex);
-	infile.open(trackstring + ".lrc", ios_base::out);
-	if (!infile.is_open()){
-	    infile.open(trackstring + ".txt", ios_base::out);
-	}
-	
-	if(infile.is_open()){
-		while (getline(infile, line)) {
-		    lyrics = lyrics + line + "\n";
-		    
-		    if (line.length() > 4){
-		        for (unsigned i=0; i < line.length() - 3; ++i){
-		            if ((line.at(i) == '[') && (line.at(i+3) == ':') && (line.at(i+6) == '.') ) {
-		                first_timestamped = true;
-		                timestamped_lines += 1;
-		            }
-		        }
-		    }
-		    if (first_timestamped == true){
-		        total_lines += 1;
-		    }
+	size_t pos = 0;
+	while (pos < lyrics.size()) {
+		size_t eol = lyrics.find('\n', pos);
+		if (eol == string::npos) {
+			eol = lyrics.size();
 		}
-		if ((timestamped_lines*100/total_lines > 75) && (total_lines != 1)){
-			sync = true;		
-		};
-			
+		string line = lyrics.substr(pos, eol - pos);
+		pos = eol + 1;
+
+		if (line.length() > 4) {
+			for (size_t i = 0; i + 6 < line.length(); i++) {
+				if (line[i] == '[' && line[i + 3] == ':' && line[i + 6] == '.') {
+					first_timestamped = true;
+					timestamped_lines += 1;
+				}
+			}
+		}
+		if (first_timestamped == true) {
+			total_lines += 1;
+		}
 	}
-	return{lyrics, sync};	
+	if ((timestamped_lines * 100 / total_lines > 75) && (total_lines != 1)) {
+		sync = true;
+	}
+	return {lyrics, sync};
 }
 
 struct parsed_lyrics get_lyrics_from_metadata(DB_playItem_t *track) {
@@ -531,32 +737,38 @@ struct parsed_lyrics get_lyrics_from_metadata(DB_playItem_t *track) {
 
 
 void save_next_to_file(DB_playItem_t *track, struct parsed_lyrics lyrics) {
-	deadbeef->pl_lock();
-	const char *track_location = deadbeef->pl_find_meta(track, ":URI");
-	deadbeef->pl_unlock();
-	ofstream outfile;
-	string trackstring = track_location;
-	size_t lastindex = trackstring.find_last_of(".");
-	trackstring = trackstring.substr(0, lastindex);
-	
-	if (lyrics.sync == true) {
-		try {
-		outfile.open(trackstring + ".lrc", ios_base::trunc);//ios_base::app
-		}
-		catch (...) {
-			std::cout << "Unable to write file\n";
-		}
+	string base = lyrics_base_path(track);
+	if (base.empty()) {
+		debug_out << "Unable to write lyrics file: no path for track\n";
+		return;
 	}
-	else {
-		try {
-		outfile.open(trackstring + ".txt", ios_base::trunc);//ios_base::app
-		}
-		catch (...)	{
-			std::cout << "Unable to write file\n";
-		}
+
+	size_t slash = base.find_last_of('/');
+	if (slash != string::npos) {
+		std::error_code error;
+		std::filesystem::create_directories(base.substr(0, slash), error);
+	}
+
+	string path = base + ((lyrics.sync == true) ? ".lrc" : ".txt");
+	ofstream outfile(path.c_str(), ios_base::trunc);//ios_base::app
+	if (!outfile.is_open()) {
+		debug_out << "Unable to write lyrics file " << path << "\n";
+		return;
 	}
 	outfile << lyrics.lyrics << endl;
 	outfile.close();
+}
+
+// Saves lyrics picked by the user (search/edit dialogs) to the location
+// selected in the config dialog: "Save next to file" writes the lyrics file,
+// anything else writes the ID tag.
+void save_lyrics(DB_playItem_t *track, struct parsed_lyrics lyrics) {
+	if (deadbeef->conf_get_int("save_method", 0) == 1) {
+		save_next_to_file(track, lyrics);
+	}
+	else {
+		save_meta_data(track, lyrics);
+	}
 }
 
 //Sets track info if no lyrics founded.
@@ -728,7 +940,7 @@ void set_info(DB_playItem_t *track) {
 
 //Main function:
 void update_lyrics(void *tr) {
-	linessizes.clear();
+	set_linessizes({});
 	DB_playItem_t *track = static_cast<DB_playItem_t*>(tr);
 	struct parsed_lyrics meta_lyrics = get_lyrics_from_metadata(track);
 	if (meta_lyrics.lyrics != "") {
@@ -770,7 +982,7 @@ void update_lyrics(void *tr) {
 
 //	 No lyrics in the tag or cache; try to get some and cache if succeeded.
 //	Search for lyrics on LRCLIB:
-    if (deadbeef->conf_get_float("lyricbar.fontscale", 1) == 1){
+    if (deadbeef->conf_get_int("lyricbar.autosearch.enable", 1)){
     	struct parsed_lyrics lrclib_lyrics = {"",false};
     	lrclib_lyrics = lrclib(string(title), string(artist), "");
     	if (lrclib_lyrics.lyrics != "") {

@@ -17,11 +17,13 @@ using namespace std;
 
 bool isValidHexaCode(string str);
 
-void set_lyrics(DB_playItem_t *track, string past, string present, string future, string padding);
+void set_lyrics(DB_playItem_t *track, string past, string present, string future, string padding, bool synced = false);
 
 void sync_or_unsync(bool syncedlyrics);
 
 vector<int> sizelines(DB_playItem_t *track, string lyrics);
+
+void request_sizelines(DB_playItem_t *track, string lyrics);
 
 void get_tags();
 

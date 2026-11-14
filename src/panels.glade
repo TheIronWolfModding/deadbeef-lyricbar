@@ -762,6 +762,75 @@
             <child>
               <placeholder/>
             </child>
+
+            <child>
+              <object class="GtkLabel" id="Lyrics_dir_label">
+                <property name="visible">True</property>
+                <property name="can-focus">False</property>
+                <property name="halign">end</property>
+                <property name="margin-end">3</property>
+                <property name="label" translatable="yes">Lyrics folder:</property>
+                <property name="justify">right</property>
+              </object>
+              <packing>
+                <property name="left-attach">1</property>
+                <property name="top-attach">8</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkEntry" id="Lyrics_dir_entry">
+                <property name="visible">True</property>
+                <property name="can-focus">True</property>
+                <property name="hexpand">True</property>
+                <property name="placeholder-text" translatable="yes">empty = next to the audio file</property>
+                <property name="tooltip-text" translatable="yes">Folder that stores the lyrics .lrc/.txt files</property>
+              </object>
+              <packing>
+                <property name="left-attach">2</property>
+                <property name="top-attach">8</property>
+                <property name="width">2</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkButton" id="Lyrics_dir_browse">
+                <property name="label" translatable="yes">Browse...</property>
+                <property name="visible">True</property>
+                <property name="can-focus">True</property>
+                <property name="receives-default">True</property>
+              </object>
+              <packing>
+                <property name="left-attach">4</property>
+                <property name="top-attach">8</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkLabel" id="Lyrics_format_label">
+                <property name="visible">True</property>
+                <property name="can-focus">False</property>
+                <property name="halign">end</property>
+                <property name="margin-end">3</property>
+                <property name="label" translatable="yes">File name format:</property>
+                <property name="justify">right</property>
+              </object>
+              <packing>
+                <property name="left-attach">1</property>
+                <property name="top-attach">9</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkEntry" id="Lyrics_format_entry">
+                <property name="visible">True</property>
+                <property name="can-focus">True</property>
+                <property name="hexpand">True</property>
+                <property name="text">[%artist% - ][%title%]</property>
+                <property name="tooltip-text" translatable="yes">%artist%, %title%, %album%, %tracknumber%; [..] is only used when its tags are not empty</property>
+              </object>
+              <packing>
+                <property name="left-attach">2</property>
+                <property name="top-attach">9</property>
+                <property name="width">3</property>
+              </packing>
+            </child>
           </object>
           <packing>
             <property name="expand">False</property>
@@ -843,6 +912,8 @@
       <!-- column-name Source -->
       <column type="gchararray"/>
       <!-- column-name gchararray1 -->
+      <column type="gchararray"/>
+      <!-- column-name IsTimestamped -->
       <column type="gchararray"/>
     </columns>
   </object>
@@ -939,10 +1010,11 @@
                         <child>
                           <object class="GtkTreeViewColumn" id="Column_artist">
                             <property name="resizable">True</property>
-                            <property name="min-width">100</property>
-                            <property name="max-width">300</property>
+                            <property name="min-width">50</property>
+                            <property name="max-width">400</property>
+                            <property name="sizing">fixed</property>
+                            <property name="fixed-width">130</property>
                             <property name="title" translatable="yes">Artista</property>
-                            <property name="expand">True</property>
                             <child>
                               <object class="GtkCellRendererText" id="artists"/>
                             </child>
@@ -951,10 +1023,11 @@
                         <child>
                           <object class="GtkTreeViewColumn" id="Column_song">
                             <property name="resizable">True</property>
-                            <property name="min-width">100</property>
-                            <property name="max-width">300</property>
+                            <property name="min-width">50</property>
+                            <property name="max-width">400</property>
+                            <property name="sizing">fixed</property>
+                            <property name="fixed-width">160</property>
                             <property name="title" translatable="yes">Canción</property>
-                            <property name="expand">True</property>
                             <child>
                               <object class="GtkCellRendererText" id="songs"/>
                             </child>
@@ -963,10 +1036,11 @@
                         <child>
                           <object class="GtkTreeViewColumn" id="Column_album">
                             <property name="resizable">True</property>
-                            <property name="min-width">100</property>
-                            <property name="max-width">300</property>
+                            <property name="min-width">50</property>
+                            <property name="max-width">400</property>
+                            <property name="sizing">fixed</property>
+                            <property name="fixed-width">150</property>
                             <property name="title" translatable="yes">Álbum</property>
-                            <property name="expand">True</property>
                             <child>
                               <object class="GtkCellRendererText" id="albums"/>
                             </child>
@@ -977,9 +1051,24 @@
                             <property name="resizable">True</property>
                             <property name="min-width">75</property>
                             <property name="max-width">150</property>
+                            <property name="sizing">fixed</property>
+                            <property name="fixed-width">100</property>
                             <property name="title" translatable="yes">Origen</property>
                             <child>
                               <object class="GtkCellRendererText" id="sources"/>
+                            </child>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkTreeViewColumn" id="Column_timestamped">
+                            <property name="resizable">True</property>
+                            <property name="min-width">50</property>
+                            <property name="max-width">150</property>
+                            <property name="sizing">fixed</property>
+                            <property name="fixed-width">110</property>
+                            <property name="title" translatable="yes">Is timestamped</property>
+                            <child>
+                              <object class="GtkCellRendererText" id="timestampeds"/>
                             </child>
                           </object>
                         </child>
@@ -989,6 +1078,17 @@
                             <child>
                               <object class="GtkCellRendererText" id="searchids"/>
                             </child>
+                          </object>
+                        </child>
+                        <child>
+                          <!-- Empty column that soaks up the leftover width, so the
+                               real columns keep the fixed widths above instead of
+                               the last one stretching across the maximized window. -->
+                          <object class="GtkTreeViewColumn" id="Column_spacer">
+                            <property name="title" translatable="yes"> </property>
+                            <property name="expand">True</property>
+                            <property name="min-width">0</property>
+                            <property name="clickable">False</property>
                           </object>
                         </child>
                       </object>

@@ -77,6 +77,8 @@ vector<string> megalobiz_get_songs(string song,string artist){
 				clean_songs.push_back(replace_string(a_s[0],lrc_space,""));
 				clean_songs.push_back("");
 				clean_songs.push_back(artists_and_songs[i]);
+				// Unknown until the page is fetched; the preview fills it in.
+				clean_songs.push_back("");
 			}
 		}
 	}

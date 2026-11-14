@@ -22,7 +22,6 @@ vector<string> lrclib_get_songs(string song, string artist, string album, int du
 	string bulk_results;
 	vector<string> results;
 	vector<string> artists_and_songs, clean_songs;
-	string empty_search = "[]";
 	slist = curl_slist_append(slist, "app-platform: WebPlayer");
 	slist = curl_slist_append(slist, "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0");
 	string url = "https://lrclib.net/api/search?artist_name=" + urlencode(artist) + "&track_name=" + urlencode(song);
@@ -36,7 +35,10 @@ vector<string> lrclib_get_songs(string song, string artist, string album, int du
 	//cout << "BULK RESULTS: ---------------------------------------" << "\n";
 	//cout << bulk_results << "\n";
 	
-	if (bulk_results.find(empty_search) == std::string::npos) {
+	// Do not scan the whole payload for "[]" to detect an empty result set:
+	// the lyrics text itself can contain that substring (e.g. "lines: []").
+	// An empty response simply yields no entries below.
+	if (!bulk_results.empty()) {
 	  	results = split(bulk_results,"},{");
 		for(long unsigned int i = 0; i < results.size(); i++) {
 			//cout << results[i] << "\n";
@@ -54,10 +56,20 @@ vector<string> lrclib_get_songs(string song, string artist, string album, int du
 				//cout << "Album: " << album[0] << "\n";
 				vector<string> duration = split(sub_results[6],",");
 				//cout << "Duration: " << duration[0] << "\n";
+				// LRCLIB says in the search payload whether it has a timed
+				// version, so the answer does not need another request.
+				string timestamped = "";
+				if (results[i].find("\"syncedLyrics\":null") != std::string::npos) {
+					timestamped = "no";
+				}
+				else if (results[i].find("\"syncedLyrics\":\"") != std::string::npos) {
+					timestamped = "yes";
+				}
 				artists_and_songs.push_back(artist[0]);
 				artists_and_songs.push_back(trackname[0]);
 				artists_and_songs.push_back(album[0]);
 				artists_and_songs.push_back(id[0]);
+				artists_and_songs.push_back(timestamped);
 			}
 		}
 	}

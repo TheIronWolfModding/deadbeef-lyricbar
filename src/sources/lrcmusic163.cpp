@@ -115,7 +115,10 @@ vector<string> music_163_get_songs(string song, string artist) {
 				artists_and_songs.push_back(artist_val);
 				artists_and_songs.push_back(song_clean);
 				artists_and_songs.push_back(album_val);
-				artists_and_songs.push_back(song_url);  
+				artists_and_songs.push_back(song_url);
+				// Whether 163 has a timed version is only known once the
+				// lyrics are fetched, so leave it for the preview to fill in.
+				artists_and_songs.push_back("");
 			}
 		}  
 	}
