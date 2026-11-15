@@ -41,6 +41,22 @@ msgstr ""
 msgid "Edge: "
 msgstr ""
 
+#: src/config_dialog.cpp:333
+msgid "Font: "
+msgstr ""
+
+#: src/config_dialog.cpp:334
+msgid "Title font size %: "
+msgstr ""
+
+#: src/config_dialog.cpp:335
+msgid "Artist font size %: "
+msgstr ""
+
+#: src/config_dialog.cpp:336
+msgid "Lyrics font size %: "
+msgstr ""
+
 #: src/config_dialog.cpp:273
 msgid "Highlight line height %: "
 msgstr ""

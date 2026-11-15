@@ -41,6 +41,22 @@ msgstr "Guardar en: "
 msgid "Edge: "
 msgstr "Borde: "
 
+#: src/config_dialog.cpp:333
+msgid "Font: "
+msgstr "Fuente: "
+
+#: src/config_dialog.cpp:334
+msgid "Title font size %: "
+msgstr "Tamaño de fuente del título %: "
+
+#: src/config_dialog.cpp:335
+msgid "Artist font size %: "
+msgstr "Tamaño de fuente del artista %: "
+
+#: src/config_dialog.cpp:336
+msgid "Lyrics font size %: "
+msgstr "Tamaño de fuente de la letra %: "
+
 #: src/config_dialog.cpp:273
 msgid "Highlight line height %: "
 msgstr "Altura línea resaltada en %: "

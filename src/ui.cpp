@@ -239,12 +239,29 @@ Justification get_justification() {
 }
 
 	void get_tags() {
+	// Global font scale (DeaDBeeF preferences) times the per-part scale set in
+	// the plugin Config dialog, so both places can be used together.
+	float fontscale = deadbeef->conf_get_float("lyricbar.fontscale", 1);
+	float titleScale = deadbeef->conf_get_float("lyricbar.title.fontscale", 1);
+	float artistScale = deadbeef->conf_get_float("lyricbar.artist.fontscale", 1);
+	float lyricsScale = deadbeef->conf_get_float("lyricbar.lyrics.fontscale", 1);
+
+	// Font family from the Config dialog. Only the family is used: the size
+	// stays under the font scale controls above.
+	string fontDesc = deadbeef->conf_get_str_fast("lyricbar.font", "");
+	const char *fontFamily = nullptr;
+	PangoFontDescription *fontDescription = nullptr;
+	if (!fontDesc.empty()) {
+		fontDescription = pango_font_description_from_string(fontDesc.c_str());
+		fontFamily = pango_font_description_get_family(fontDescription);
+	}
+
 	tagItalic = refBuffer->create_tag();
 	tagItalic->property_style() = Pango::STYLE_ITALIC;
-	tagItalic->property_scale() = deadbeef->conf_get_float("lyricbar.fontscale", 1);
+	tagItalic->property_scale() = artistScale*fontscale;
 
 	tagRegular = refBuffer->create_tag();
-	tagRegular->property_scale() = deadbeef->conf_get_float("lyricbar.fontscale", 1);
+	tagRegular->property_scale() = lyricsScale*fontscale;
 
 	tagLeftmargin = refBuffer->create_tag();
 	tagLeftmargin->property_left_margin() = deadbeef->conf_get_float("lyricbar.border", 22)*deadbeef->conf_get_float("lyricbar.fontscale", 1);
@@ -253,11 +270,22 @@ Justification get_justification() {
 	tagRightmargin->property_right_margin() = deadbeef->conf_get_float("lyricbar.border", 22)*deadbeef->conf_get_float("lyricbar.fontscale", 1);
 
 	tagBold = refBuffer->create_tag();
-	tagBold->property_scale() = deadbeef->conf_get_float("lyricbar.fontscale", 1);
+	tagBold->property_scale() = lyricsScale*fontscale;
 	tagBold->property_weight() = Pango::WEIGHT_BOLD;
 
 	tagLarge = refBuffer->create_tag();
-	tagLarge->property_scale() = 1.2*deadbeef->conf_get_float("lyricbar.fontscale", 1);
+	tagLarge->property_scale() = titleScale*fontscale;
+	tagLarge->property_weight() = Pango::WEIGHT_BOLD;
+
+	if (fontFamily) {
+		tagItalic->property_family() = fontFamily;
+		tagRegular->property_family() = fontFamily;
+		tagBold->property_family() = fontFamily;
+		tagLarge->property_family() = fontFamily;
+	}
+	if (fontDescription) {
+		pango_font_description_free(fontDescription);
+	}
 
 	tagSmall = refBuffer->create_tag();
 	tagSmall->property_scale() = 0.0001;
@@ -295,7 +323,7 @@ Justification get_justification() {
 	tagForegroundColorPast = refBuffer->create_tag();
 	tagForegroundColorPast->property_foreground_rgba() = pastColor;
 
-	tagsTitle = {tagLarge, tagBold, tagCenter};
+	tagsTitle = {tagLarge, tagCenter};
 	tagsArtist = {tagItalic, tagCenter};
 
 	tagsSyncline = {tagBold, tagForegroundColorHighlight};

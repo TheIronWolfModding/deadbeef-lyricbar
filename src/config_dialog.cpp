@@ -41,6 +41,10 @@ GtkRadioButton	*Save_no_save;
 GtkSpinButton	*Highlight_line;
 GtkCheckButton	*Check_bold;
 GtkSpinButton	*Edge;
+GtkFontButton	*Font_choice;
+GtkSpinButton	*Title_font;
+GtkSpinButton	*Artist_font;
+GtkSpinButton	*Lyrics_font;
 GtkButton		*Apply;
 GtkButton		*Cancel;
 GtkButton		*OK;
@@ -51,6 +55,10 @@ GtkLabel		*Align_label;
 GtkLabel		*Save_method_label;
 GtkLabel		*Highlight_line_label;
 GtkLabel		*Edge_label;
+GtkLabel		*Font_label;
+GtkLabel		*Title_font_label;
+GtkLabel		*Artist_font_label;
+GtkLabel		*Lyrics_font_label;
 GtkLabel		*Lyrics_dir_label;
 GtkLabel		*Lyrics_format_label;
 GtkEntry		*Lyrics_dir_entry;
@@ -233,6 +241,12 @@ void	on_Apply_clicked (GtkButton *b) {
 	deadbeef->conf_set_int("save_method", Save_method_int_value);
 	deadbeef->conf_set_int("lyricbar.vpostion", gtk_spin_button_get_value (GTK_SPIN_BUTTON(Highlight_line)));
 	deadbeef->conf_set_int("lyricbar.border", gtk_spin_button_get_value (GTK_SPIN_BUTTON(Edge)));
+	deadbeef->conf_set_float("lyricbar.title.fontscale", gtk_spin_button_get_value (GTK_SPIN_BUTTON(Title_font))/100);
+	deadbeef->conf_set_float("lyricbar.artist.fontscale", gtk_spin_button_get_value (GTK_SPIN_BUTTON(Artist_font))/100);
+	deadbeef->conf_set_float("lyricbar.lyrics.fontscale", gtk_spin_button_get_value (GTK_SPIN_BUTTON(Lyrics_font))/100);
+	char *font = gtk_font_chooser_get_font(GTK_FONT_CHOOSER(Font_choice));
+	deadbeef->conf_set_str("lyricbar.font", font ? font : "");
+	g_free(font);
 	deadbeef->conf_set_str("lyricbar.lyrics_dir", gtk_entry_get_text(GTK_ENTRY(Lyrics_dir_entry)));
 	deadbeef->conf_set_str("lyricbar.lyrics_filename_format", gtk_entry_get_text(GTK_ENTRY(Lyrics_format_entry)));
 	get_tags();
@@ -277,6 +291,10 @@ int on_button_config (GtkMenuItem *menuitem, gpointer user_data) {
 	Text_color 				= GTK_COLOR_BUTTON(gtk_builder_get_object(builder, "Text_color"));
 	Highlight_line 			= GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "Highlight_line"));
 	Edge 					= GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "Edge"));
+	Font_choice				= GTK_FONT_BUTTON(gtk_builder_get_object(builder, "Font_choice"));
+	Title_font				= GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "Title_font"));
+	Artist_font				= GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "Artist_font"));
+	Lyrics_font				= GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "Lyrics_font"));
 	Check_bold				= GTK_CHECK_BUTTON(gtk_builder_get_object(builder, "Check_bold"));
 	Align_left 				= GTK_RADIO_BUTTON(gtk_builder_get_object(builder, "Align_left"));
 	Align_center 			= GTK_RADIO_BUTTON(gtk_builder_get_object(builder, "Align_center"));
@@ -293,6 +311,10 @@ int on_button_config (GtkMenuItem *menuitem, gpointer user_data) {
 	Align_label				= GTK_LABEL(gtk_builder_get_object(builder, "Align_label"));
 	Save_method_label		= GTK_LABEL(gtk_builder_get_object(builder, "Save_method_label"));
 	Edge_label				= GTK_LABEL(gtk_builder_get_object(builder, "Edge_label"));
+	Font_label				= GTK_LABEL(gtk_builder_get_object(builder, "Font_label"));
+	Title_font_label		= GTK_LABEL(gtk_builder_get_object(builder, "Title_font_label"));
+	Artist_font_label		= GTK_LABEL(gtk_builder_get_object(builder, "Artist_font_label"));
+	Lyrics_font_label		= GTK_LABEL(gtk_builder_get_object(builder, "Lyrics_font_label"));
 	Highlight_line_label	= GTK_LABEL(gtk_builder_get_object(builder, "Highlight_line_label"));
 	Lyrics_dir_label		= GTK_LABEL(gtk_builder_get_object(builder, "Lyrics_dir_label"));
 	Lyrics_format_label		= GTK_LABEL(gtk_builder_get_object(builder, "Lyrics_format_label"));
@@ -308,6 +330,10 @@ int on_button_config (GtkMenuItem *menuitem, gpointer user_data) {
 	gtk_label_set_label(Align_label, _("Align: "));
 	gtk_label_set_label(Save_method_label, _("Save to: "));
 	gtk_label_set_label(Edge_label, _("Edge: "));
+	gtk_label_set_label(Font_label, _("Font: "));
+	gtk_label_set_label(Title_font_label, _("Title font size %: "));
+	gtk_label_set_label(Artist_font_label, _("Artist font size %: "));
+	gtk_label_set_label(Lyrics_font_label, _("Lyrics font size %: "));
 	gtk_label_set_label(Highlight_line_label, _("Highlight line height %: "));
 	gtk_label_set_label(Lyrics_dir_label, _("Lyrics folder: "));
 	gtk_label_set_label(Lyrics_format_label, _("File name format: "));
@@ -357,6 +383,17 @@ int on_button_config (GtkMenuItem *menuitem, gpointer user_data) {
 // Saved value to spin buttons:
 	gtk_spin_button_set_value(Highlight_line, deadbeef->conf_get_int("lyricbar.vpostion", 50));
 	gtk_spin_button_set_value(Edge, deadbeef->conf_get_int("lyricbar.border", 22));
+
+// Saved font scales (% of the panel font):
+	gtk_spin_button_set_value(Title_font, deadbeef->conf_get_float("lyricbar.title.fontscale", 1)*100);
+	gtk_spin_button_set_value(Artist_font, deadbeef->conf_get_float("lyricbar.artist.fontscale", 1)*100);
+	gtk_spin_button_set_value(Lyrics_font, deadbeef->conf_get_float("lyricbar.lyrics.fontscale", 1)*100);
+
+// Saved font family to the font chooser:
+	const char *font = deadbeef->conf_get_str_fast("lyricbar.font", "");
+	if (font && *font) {
+		gtk_font_chooser_set_font(GTK_FONT_CHOOSER(Font_choice), font);
+	}
 
 // Saved value to check button:
 	Check_bold_int_value = deadbeef->conf_get_int("lyricbar.bold", 1);
